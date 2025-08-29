@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "AI Nutrition Assistant",
-    "slug": "ai-nutrition-assistant",
+    "slug": "meal-planner-ai",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -11,6 +11,12 @@
     },
     "android": {
       "package": "com.dallasthompson.ainutritionassistant"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "0e6e8457-3e16-4a8b-b88c-528f204cc800"
+      }
+    },
+    "owner": "brudallism"
   }
 }

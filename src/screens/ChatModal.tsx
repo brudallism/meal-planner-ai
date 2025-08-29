@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,99 +6,81 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
+  TextInput,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GiftedChat, IMessage, InputToolbar, Composer, Send } from 'react-native-gifted-chat';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 
+interface Message {
+  id: string;
+  text: string;
+  isUser: boolean;
+  timestamp: Date;
+}
+
 const ChatModal = ({ navigation }: any) => {
-  const [messages, setMessages] = useState<IMessage[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
     // Initialize with welcome message
     setMessages([
       {
-        _id: 1,
+        id: '1',
         text: "Hi! I'm your AI nutrition assistant. I'm here to help you log meals, plan your nutrition, and find healthy options. What would you like to do today?",
-        createdAt: new Date(),
-        user: {
-          _id: 2,
-          name: 'Nutrition AI',
-          avatar: '🤖',
-        },
+        isUser: false,
+        timestamp: new Date(),
       },
     ]);
   }, []);
 
-  const onSend = useCallback(async (newMessages: IMessage[] = []) => {
-    // Add user message immediately
-    setMessages(previousMessages => GiftedChat.append(previousMessages, newMessages));
+  const handleSend = useCallback(async () => {
+    if (!inputText.trim()) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      text: inputText.trim(),
+      isUser: true,
+      timestamp: new Date(),
+    };
+
+    // Add user message
+    setMessages(prev => [...prev, userMessage]);
+    setInputText('');
     
     // Show typing indicator
     setIsTyping(true);
     
-    // Simulate AI response (replace with actual OpenAI API call)
+    // Simulate AI response (replace with actual OpenAI API call later)
     setTimeout(() => {
-      const userMessage = newMessages[0].text.toLowerCase();
+      const userMessageLower = userMessage.text.toLowerCase();
       let aiResponse = "I understand you want help with nutrition. Let me assist you with that!";
       
       // Simple response logic (will be replaced with OpenAI)
-      if (userMessage.includes('meal') || userMessage.includes('food')) {
+      if (userMessageLower.includes('meal') || userMessageLower.includes('food')) {
         aiResponse = "Great! I can help you log meals and track your nutrition. What did you eat?";
-      } else if (userMessage.includes('plan')) {
+      } else if (userMessageLower.includes('plan')) {
         aiResponse = "I'd love to help you plan your meals! What are your nutrition goals?";
-      } else if (userMessage.includes('restaurant') || userMessage.includes('eating out')) {
+      } else if (userMessageLower.includes('restaurant') || userMessageLower.includes('eating out')) {
         aiResponse = "I can help you find healthy options nearby! Would you like me to suggest some restaurants?";
       }
 
-      const aiMessage: IMessage = {
-        _id: Math.round(Math.random() * 1000000),
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
         text: aiResponse,
-        createdAt: new Date(),
-        user: {
-          _id: 2,
-          name: 'Nutrition AI',
-          avatar: '🤖',
-        },
+        isUser: false,
+        timestamp: new Date(),
       };
 
-      setMessages(previousMessages => GiftedChat.append(previousMessages, [aiMessage]));
+      setMessages(prev => [...prev, aiMessage]);
       setIsTyping(false);
     }, 1500);
-  }, []);
-
-  const renderInputToolbar = (props: any) => {
-    return (
-      <InputToolbar
-        {...props}
-        containerStyle={styles.inputToolbar}
-        primaryStyle={styles.inputPrimary}
-      />
-    );
-  };
-
-  const renderComposer = (props: any) => {
-    return (
-      <Composer
-        {...props}
-        textInputStyle={styles.composer}
-        placeholder="Ask me about nutrition..."
-        placeholderTextColor={COLORS.gray}
-      />
-    );
-  };
-
-  const renderSend = (props: any) => {
-    return (
-      <Send {...props} containerStyle={styles.sendContainer}>
-        <View style={styles.sendButton}>
-          <Ionicons name="send" size={20} color={COLORS.white} />
-        </View>
-      </Send>
-    );
-  };
+  }, [inputText]);
 
   const quickSuggestions = [
     { id: 1, text: "Log my breakfast", icon: "restaurant" },
@@ -108,17 +90,30 @@ const ChatModal = ({ navigation }: any) => {
   ];
 
   const handleQuickSuggestion = (suggestion: any) => {
-    const message: IMessage = {
-      _id: Math.round(Math.random() * 1000000),
-      text: suggestion.text,
-      createdAt: new Date(),
-      user: {
-        _id: 1,
-        name: 'You',
-      },
-    };
-    onSend([message]);
+    setInputText(suggestion.text);
   };
+
+  const renderMessage = ({ item }: { item: Message }) => (
+    <View style={[
+      styles.messageContainer,
+      item.isUser ? styles.userMessage : styles.aiMessage
+    ]}>
+      <View style={[
+        styles.messageBubble,
+        item.isUser ? styles.userBubble : styles.aiBubble
+      ]}>
+        <Text style={[
+          styles.messageText,
+          item.isUser ? styles.userText : styles.aiText
+        ]}>
+          {item.text}
+        </Text>
+      </View>
+      <Text style={styles.timestamp}>
+        {item.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      </Text>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -143,7 +138,7 @@ const ChatModal = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      {/* Quick Suggestions (show only when chat is empty or minimal) */}
+      {/* Quick Suggestions (show only when chat is minimal) */}
       {messages.length <= 2 && (
         <View style={styles.suggestionsContainer}>
           <Text style={styles.suggestionsTitle}>Quick actions:</Text>
@@ -166,30 +161,54 @@ const ChatModal = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* Chat */}
+      {/* Chat Messages */}
       <KeyboardAvoidingView 
         style={styles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
-        <GiftedChat
-          messages={messages}
-          onSend={onSend}
-          user={{
-            _id: 1,
-            name: 'You',
-          }}
-          renderInputToolbar={renderInputToolbar}
-          renderComposer={renderComposer}
-          renderSend={renderSend}
-          isTyping={isTyping}
-          messagesContainerStyle={styles.messagesContainer}
-          minInputToolbarHeight={60}
-          bottomOffset={Platform.OS === 'ios' ? 0 : 0}
-          renderAvatar={null}
-          showUserAvatar={false}
-          showAvatarForEveryMessage={false}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          style={styles.messagesList}
+          contentContainerStyle={styles.messagesContainer}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
+
+        {/* Typing Indicator */}
+        {isTyping && (
+          <View style={styles.typingContainer}>
+            <View style={styles.typingBubble}>
+              <Text style={styles.typingText}>AI is typing...</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Input */}
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.textInput}
+            placeholder="Ask me about nutrition..."
+            placeholderTextColor={COLORS.gray}
+            value={inputText}
+            onChangeText={setInputText}
+            multiline
+            maxLength={500}
+          />
+          <TouchableOpacity 
+            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+            onPress={handleSend}
+            disabled={!inputText.trim()}
+          >
+            <Ionicons 
+              name="send" 
+              size={20} 
+              color={!inputText.trim() ? COLORS.gray : COLORS.white} 
+            />
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -269,37 +288,92 @@ const styles = StyleSheet.create({
   chatContainer: {
     flex: 1,
   },
-  messagesContainer: {
-    backgroundColor: COLORS.cream,
+  messagesList: {
+    flex: 1,
+    paddingHorizontal: SIZES.padding,
   },
-  inputToolbar: {
-    backgroundColor: COLORS.cream,
-    borderTopColor: COLORS.lightGray,
-    borderTopWidth: 1,
-    paddingHorizontal: SIZES.base,
+  messagesContainer: {
     paddingVertical: SIZES.base,
   },
-  inputPrimary: {
-    alignItems: 'center',
+  messageContainer: {
+    marginBottom: SIZES.base,
   },
-  composer: {
+  userMessage: {
+    alignItems: 'flex-end',
+  },
+  aiMessage: {
+    alignItems: 'flex-start',
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+    borderRadius: 20,
+  },
+  userBubble: {
+    backgroundColor: COLORS.teal,
+    borderBottomRightRadius: 8,
+  },
+  aiBubble: {
+    backgroundColor: COLORS.white,
+    borderBottomLeftRadius: 8,
+    ...SHADOWS.light,
+  },
+  messageText: {
+    fontSize: SIZES.callout,
+    lineHeight: 20,
+  },
+  userText: {
+    color: COLORS.white,
+  },
+  aiText: {
+    color: COLORS.teal,
+  },
+  timestamp: {
+    fontSize: SIZES.caption2,
+    color: COLORS.gray,
+    marginTop: 4,
+    marginHorizontal: SIZES.base,
+  },
+  typingContainer: {
+    paddingHorizontal: SIZES.padding,
+    marginBottom: SIZES.base,
+  },
+  typingBubble: {
+    backgroundColor: COLORS.white,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+    borderRadius: 20,
+    borderBottomLeftRadius: 8,
+    alignSelf: 'flex-start',
+    ...SHADOWS.light,
+  },
+  typingText: {
+    fontSize: SIZES.callout,
+    color: COLORS.gray,
+    fontStyle: 'italic',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.lightGray,
+    backgroundColor: COLORS.cream,
+  },
+  textInput: {
+    flex: 1,
     backgroundColor: COLORS.white,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.lightGray,
     paddingHorizontal: SIZES.padding,
-    paddingTop: Platform.OS === 'ios' ? 8 : 6,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 6,
+    paddingVertical: SIZES.base,
     fontSize: SIZES.callout,
     color: COLORS.teal,
     marginRight: SIZES.base,
     maxHeight: 100,
-  },
-  sendContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 0,
-    marginBottom: 4,
   },
   sendButton: {
     backgroundColor: COLORS.orange,
@@ -308,6 +382,9 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: COLORS.lightGray,
   },
 });
 
