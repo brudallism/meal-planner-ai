@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "AI Nutrition Assistant",
+    "slug": "ai-nutrition-assistant",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.dallasthompson.ainutritionassistant"
+    },
+    "android": {
+      "package": "com.dallasthompson.ainutritionassistant"
+    }
+  }
+}
