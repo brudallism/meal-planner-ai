@@ -9,6 +9,7 @@ import {
   ScrollView,
   TextInput,
   FlatList,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +34,8 @@ const ChatModal = ({ navigation }: any) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const addMeal = useAppStore((state) => state.addMeal);
   const { dailyTotals, nutritionGoals, todaysMeals } = useAppStore();
@@ -48,6 +51,28 @@ const ChatModal = ({ navigation }: any) => {
         timestamp: new Date(),
       },
     ]);
+  }, []);
+
+  useEffect(() => {
+    // Keyboard event listeners
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+      // Scroll to bottom when keyboard shows
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    });
+
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      keyboardDidShowListener?.remove();
+      keyboardDidHideListener?.remove();
+    };
   }, []);
 
   const handleSend = useCallback(async () => {
@@ -508,6 +533,7 @@ Remember: You're actively helping them build better eating habits through engagi
       <KeyboardAvoidingView 
         style={styles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <FlatList
           ref={flatListRef}
@@ -515,9 +541,17 @@ Remember: You're actively helping them build better eating habits through engagi
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           style={styles.messagesList}
-          contentContainerStyle={styles.messagesContainer}
+          contentContainerStyle={[
+            styles.messagesContainer,
+            keyboardVisible && { paddingBottom: keyboardHeight + 80 }
+          ]}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          keyboardShouldPersistTaps="handled"
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
         />
 
         {/* Typing Indicator */}
@@ -528,31 +562,40 @@ Remember: You're actively helping them build better eating habits through engagi
             </View>
           </View>
         )}
-
-        {/* Input */}
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Ask me about nutrition..."
-            placeholderTextColor={COLORS.gray}
-            value={inputText}
-            onChangeText={setInputText}
-            multiline
-            maxLength={500}
-          />
-          <TouchableOpacity 
-            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-            onPress={handleSend}
-            disabled={!inputText.trim()}
-          >
-            <Ionicons 
-              name="send" 
-              size={20} 
-              color={!inputText.trim() ? COLORS.gray : COLORS.white} 
-            />
-          </TouchableOpacity>
-        </View>
       </KeyboardAvoidingView>
+
+      {/* Input Container - Outside KeyboardAvoidingView for better behavior */}
+      <View style={[
+        styles.inputContainer,
+        keyboardVisible && { bottom: keyboardHeight }
+      ]}>
+        <TextInput
+          style={styles.textInput}
+          placeholder="Ask me about nutrition..."
+          placeholderTextColor={COLORS.gray}
+          value={inputText}
+          onChangeText={setInputText}
+          multiline
+          maxLength={500}
+          onFocus={() => {
+            // Scroll to bottom when input is focused
+            setTimeout(() => {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }, 100);
+          }}
+        />
+        <TouchableOpacity 
+          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+          onPress={handleSend}
+          disabled={!inputText.trim()}
+        >
+          <Ionicons 
+            name="send" 
+            size={20} 
+            color={!inputText.trim() ? COLORS.gray : COLORS.white} 
+          />
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 };
@@ -637,6 +680,7 @@ const styles = StyleSheet.create({
   },
   messagesContainer: {
     paddingVertical: SIZES.base,
+    paddingBottom: 120, // Increased space for input container
   },
   messageContainer: {
     marginBottom: SIZES.base,
@@ -701,9 +745,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: SIZES.padding,
     paddingVertical: SIZES.base,
+    paddingBottom: SIZES.base,
     borderTopWidth: 1,
     borderTopColor: COLORS.lightGray,
     backgroundColor: COLORS.cream,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
   },
   textInput: {
     flex: 1,
