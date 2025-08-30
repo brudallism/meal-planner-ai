@@ -17,6 +17,10 @@ import { useAppStore } from '../store/appStore';
 import { extractMealData } from '../services/nutritionParser';
 import { parseAIActions } from '../services/aiActionParser';
 import { generateMealSuggestions } from '../services/mealSuggestions';
+import { analyzeMessageScope, generateRedirectionResponse } from '../services/scopeFilter';
+import { confirmationService } from '../services/confirmationService';
+import { detectConfirmation, getLatestPendingMeal } from '../services/confirmationDetector';
+import { analyzeMealDetails, generateDetailQuestions, hasProvidedMissingDetails } from '../services/mealDetailAnalyzer';
 
 interface Message {
   id: string;
@@ -62,8 +66,118 @@ const ChatModal = ({ navigation }: any) => {
     
     // Show typing indicator
     setIsTyping(true);
+
+    // Pre-screen message for nutrition scope
+    const scopeAnalysis = analyzeMessageScope(userMessage.text);
     
-    // OpenAI API call
+    if (scopeAnalysis.redirectionNeeded) {
+      // Immediate redirection without calling OpenAI
+      const redirectionMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: generateRedirectionResponse(scopeAnalysis),
+        isUser: false,
+        timestamp: new Date(),
+      };
+      
+      setMessages(prev => [...prev, redirectionMessage]);
+      setIsTyping(false);
+      return;
+    }
+    
+    // Check if this is a confirmation/rejection response first
+    const confirmationResult = detectConfirmation(userMessage.text);
+    const pendingMeal = getLatestPendingMeal(confirmationService);
+
+    // Check if user is providing missing details for a pending meal
+    if (pendingMeal && pendingMeal.data.needsDetails) {
+      const providedDetails = hasProvidedMissingDetails(userMessage.text, pendingMeal.data.missingDetails);
+      
+      if (providedDetails) {
+        // User provided additional details - re-analyze with combined information
+        const combinedMessage = `${pendingMeal.userMessage} ${userMessage.text}`;
+        
+        try {
+          const updatedMealData = await extractMealData(combinedMessage, '');
+          if (updatedMealData && updatedMealData.items.length > 0) {
+            // Update the pending meal with new details
+            pendingMeal.data = { ...updatedMealData, needsDetails: false };
+            
+            // Ask for final confirmation
+            const confirmationText = `Great! Now I have: ${updatedMealData.items.map(item => 
+              `${item.quantity}${item.unit} ${item.name}`
+            ).join(', ')} for ${updatedMealData.mealType || 'your meal'}. Should I add this to your tracker? 📊`;
+            
+            const confirmationMessage = {
+              id: `final_confirm_${Date.now()}`,
+              text: confirmationText,
+              isUser: false,
+              timestamp: new Date(),
+            };
+            setMessages(prev => [...prev, confirmationMessage]);
+            setIsTyping(false);
+            return;
+          }
+        } catch (error) {
+          console.log('Updated meal parsing failed:', error);
+        }
+      }
+    }
+
+    if (confirmationResult.isConfirmation && pendingMeal && !pendingMeal.data.needsDetails) {
+      // User confirmed - execute the pending meal log
+      try {
+        const mealData = pendingMeal.data;
+        for (const item of mealData.items) {
+          const mealLog = {
+            id: `meal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            user_id: 'demo-user',
+            meal_name: item.name,
+            meal_type: mealData.mealType || 'snack' as const,
+            calories: item.macros.calories,
+            protein: item.macros.protein,
+            carbs: item.macros.carbs,
+            fat: item.macros.fat,
+            fiber: item.macros.fiber,
+            sugar: item.macros.sugar,
+            confidence: mealData.confidence,
+            logged_at: mealData.eatingTime || new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          };
+          addMeal(mealLog);
+        }
+        
+        // Confirm the action
+        confirmationService.confirmAction(pendingMeal.id);
+        
+        // Send success message
+        const successMessage = {
+          id: `success_${Date.now()}`,
+          text: `✅ Perfect! I've logged your meal. Your progress is looking great! 🎉`,
+          isUser: false,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, successMessage]);
+        setIsTyping(false);
+        return;
+      } catch (error) {
+        console.error('Meal logging error:', error);
+      }
+    } else if (confirmationResult.isRejection && pendingMeal) {
+      // User rejected - cancel the pending meal log
+      confirmationService.rejectAction(pendingMeal.id);
+      
+      const rejectionMessage = {
+        id: `rejection_${Date.now()}`,
+        text: "No problem! I won't log that meal. What else can I help you with regarding your nutrition? 😊",
+        isUser: false,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, rejectionMessage]);
+      setIsTyping(false);
+      return;
+    }
+
+    // Continue with regular OpenAI API call
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -87,28 +201,73 @@ CONVERSATION STYLE:
 - Celebrate small wins and progress
 - Use encouraging language and occasional emojis
 - Make nutrition feel approachable, not overwhelming
+- Keep the conversation flowing naturally
+- Offer healthier alternatives when users mention unhealthy choices
+- Guide users toward better nutrition decisions with gentle suggestions
 
 CORE ACTIONS YOU CAN PERFORM:
-🍽️ LOG MEALS: When they mention eating something, automatically log it with macros
-📊 UPDATE GOALS: Adjust their nutrition targets based on their needs
+🍽️ LOG MEALS: When they mention eating something, ask for confirmation before logging
+📊 UPDATE GOALS: Adjust their nutrition targets based on their needs  
 🥗 SUGGEST MEALS: Recommend foods that fit their goals and preferences
 📅 PLAN AHEAD: Help create meal plans that work for their lifestyle
 🎯 TRACK PROGRESS: Show how they're doing toward their goals
+
+CRITICAL MEAL LOGGING PROTOCOL:
+1. When user mentions eating food, DO NOT auto-log immediately
+2. Check if SPECIFIC QUANTITIES are provided (oz, grams, cups, slices, pieces, etc.)
+3. If quantities are missing, ask detailed questions:
+   - Eggs: "How many eggs? What size?"
+   - Bread/Toast: "How many slices? What type of bread?"
+   - Meat/Fish: "How many ounces? What cut/type?"
+   - Vegetables: "How much (cups)? Which vegetables specifically?"
+   - Any food: "What type exactly? How much?"
+4. Ask for eating time: "What time did you eat this?"
+5. Only after getting ALL details, ask: "Should I add this to your tracker?"
+6. Wait for user confirmation before logging
+7. If user just mentions enjoying food, ask: "Did you actually eat this, or are we chatting about it?"
+
+ACCURACY IS CRITICAL - Never log meals without specific quantities!
 
 CONVERSATION FLOW:
 1. Acknowledge what they've shared
 2. Ask 1-2 specific questions to understand better
 3. Give actionable advice or take an action (like logging food)
-4. End with encouragement or next steps
+4. If they mention unhealthy choices, suggest better alternatives
+5. End with encouragement or next steps
 
-BOUNDARIES: Only discuss nutrition, food, health, and wellness. If they ask about other topics, redirect warmly: "I'm all about helping you with your nutrition journey! What can I help you with food-wise today?"
+GUIDANCE EXAMPLES:
+- User wants "1lb bag of sour patch kids" → Suggest "How about an açaí bowl with fresh berries? You'll get that sweet satisfaction plus antioxidants!"
+- User plans "fast food burger" → Suggest "What about a turkey burger with avocado? Still satisfying but much more nutritious!"
+- User craves "soda" → Suggest "Try sparkling water with fresh fruit slices - bubbly and refreshing!"
 
-USER'S CURRENT STATUS:
+🚫 ABSOLUTE RESTRICTIONS - NEVER DISCUSS:
+- Exercise, workouts, fitness, gym, sports, physical activity
+- Medical conditions (except diet-related: PCOS, Hashimoto's, gluten/lactose intolerance)
+- Technology, apps, software, devices (except food/nutrition apps)
+- Personal life, relationships, work, career, family
+- Entertainment, movies, music, news, politics
+- Travel, weather, hobbies, lifestyle advice
+- Shopping (non-food), clothing, electronics
+- General health advice beyond nutrition
+
+✅ YOUR EXCLUSIVE SCOPE - ONLY DISCUSS:
+- Nutrition, macros, micronutrients, calories, vitamins, minerals
+- Food, meals, cooking, recipes, ingredients, preparation
+- Meal planning, grocery shopping, meal prep, kitchen techniques
+- Dietary conditions: PCOS, Hashimoto's, celiac, gluten intolerance, lactose intolerance
+- Eating habits, portion sizes, food timing, hydration
+- Supplements related to nutrition and diet
+- Restaurants, dining, food choices, menu navigation
+- Food storage, freshness, food safety
+
+CRITICAL BOUNDARY RULE: If ANY topic falls outside nutrition/food scope, immediately redirect with: "I'm your dedicated nutrition coach! Let's focus on your food and eating goals. What nutrition topic can I help you with today?"
+
+USER'S CURRENT NUTRITION STATUS:
 - Daily Goals: ${nutritionGoals.calories} calories, ${nutritionGoals.protein}g protein, ${nutritionGoals.carbs}g carbs, ${nutritionGoals.fat}g fat
 - Today's Progress: ${dailyTotals.calories}/${nutritionGoals.calories} calories (${Math.round((dailyTotals.calories/nutritionGoals.calories)*100)}%), ${dailyTotals.protein}g/${nutritionGoals.protein}g protein, ${dailyTotals.carbs}g/${nutritionGoals.carbs}g carbs, ${dailyTotals.fat}g/${nutritionGoals.fat}g fat
 - Meals logged today: ${todaysMeals.length} items
 
-Remember: You're not just answering questions - you're actively helping them build better eating habits through conversation and actions!`
+Remember: You're actively helping them build better eating habits through engaging conversation AND taking actions in their nutrition app!`
             },
             {
               role: 'user',
@@ -133,42 +292,69 @@ Remember: You're not just answering questions - you're actively helping them bui
       setMessages(prev => [...prev, aiMessage]);
       setIsTyping(false);
 
-      // Parse and execute AI actions
+      // Parse potential meal data for confirmation (don't log immediately)
       try {
-        // First try the detailed meal parsing
         const mealData = await extractMealData(userMessage.text, aiResponse);
         if (mealData && mealData.items.length > 0) {
-          // Create meal logs from parsed data
-          for (const item of mealData.items) {
-            const mealLog = {
-              id: `meal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              user_id: 'demo-user',
-              meal_name: item.name,
-              meal_type: mealData.mealType || 'snack' as const,
-              calories: item.macros.calories,
-              protein: item.macros.protein,
-              carbs: item.macros.carbs,
-              fat: item.macros.fat,
-              fiber: item.macros.fiber,
-              sugar: item.macros.sugar,
-              confidence: mealData.confidence,
-              logged_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-            };
-            addMeal(mealLog);
-          }
+          // Analyze if we have all the necessary details
+          const foodItems = mealData.items.map(item => item.name);
+          const detailAnalysis = analyzeMealDetails(foodItems, userMessage.text);
           
-          // Send a confirmation message that meals were logged
-          const confirmationMessage = {
-            id: `confirm_${Date.now()}`,
-            text: `✅ Awesome! I've logged ${mealData.items.length} item${mealData.items.length > 1 ? 's' : ''} for you. Your updated totals: ${dailyTotals.calories + mealData.totalMacros.calories} calories, ${dailyTotals.protein + mealData.totalMacros.protein}g protein! 🎉`,
-            isUser: false,
-            timestamp: new Date(),
-          };
-          setMessages(prev => [...prev, confirmationMessage]);
+          if (!detailAnalysis.hasAllDetails) {
+            // Missing details - AI should ask for more information
+            const detailQuestions = generateDetailQuestions(detailAnalysis, mealData.mealType);
+            
+            // Store incomplete meal data for later completion
+            const pendingActionId = confirmationService.addPendingAction({
+              type: 'meal_log',
+              data: { ...mealData, needsDetails: true, missingDetails: detailAnalysis.gaps },
+              userMessage: userMessage.text,
+              aiResponse: aiResponse
+            });
+            
+            // Send follow-up message asking for details if AI didn't
+            setTimeout(() => {
+              if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
+                const detailMessage = {
+                  id: `details_${Date.now()}`,
+                  text: detailQuestions,
+                  isUser: false,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => [...prev, detailMessage]);
+              }
+            }, 1500);
+          } else {
+            // All details provided - proceed to confirmation
+            const pendingActionId = confirmationService.addPendingAction({
+              type: 'meal_log',
+              data: mealData,
+              userMessage: userMessage.text,
+              aiResponse: aiResponse
+            });
+            
+            // AI should have asked for confirmation in its response
+            setTimeout(() => {
+              if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
+                const mealConfirmation = {
+                  ...mealData,
+                  mealType: mealData.mealType || 'snack' as const,
+                  eatingTime: '' // Will prompt user for time
+                };
+                const confirmationText = confirmationService.generateConfirmationMessage(mealConfirmation, userMessage.text);
+                const confirmationMessage = {
+                  id: `confirm_prompt_${Date.now()}`,
+                  text: confirmationText,
+                  isUser: false,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => [...prev, confirmationMessage]);
+              }
+            }, 1500);
+          }
         }
 
-        // Then parse other AI actions
+        // Handle other AI actions (goals, suggestions, etc.)
         const actions = await parseAIActions(userMessage.text, aiResponse);
         for (const action of actions) {
           switch (action.type) {
@@ -182,7 +368,6 @@ Remember: You're not just answering questions - you're actively helping them bui
                 };
                 setNutritionGoals(newGoals);
                 
-                // Send confirmation that goals were updated
                 const goalUpdateMessage = {
                   id: `goal_update_${Date.now()}`,
                   text: `🎯 Perfect! I've updated your nutrition goals: ${newGoals.calories} calories, ${newGoals.protein}g protein, ${newGoals.carbs}g carbs, ${newGoals.fat}g fat. Let's smash these targets! 💪`,
@@ -218,7 +403,6 @@ Remember: You're not just answering questions - you're actively helping them bui
               }
               break;
             case 'show_progress':
-              // Could trigger a visual progress indicator or update
               console.log('Showing progress triggered by AI');
               break;
             default:
@@ -227,7 +411,6 @@ Remember: You're not just answering questions - you're actively helping them bui
         }
       } catch (error) {
         console.log('AI action parsing failed:', error);
-        // Silent fail - don't disrupt the chat experience
       }
     } catch (error) {
       console.error('OpenAI API Error:', error);
