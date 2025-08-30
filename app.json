@@ -17,6 +17,12 @@
         "projectId": "0e6e8457-3e16-4a8b-b88c-528f204cc800"
       }
     },
-    "owner": "brudallism"
+    "owner": "brudallism",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/0e6e8457-3e16-4a8b-b88c-528f204cc800"
+    }
   }
 }

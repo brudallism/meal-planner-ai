@@ -4,6 +4,7 @@ export const COLORS = {
   orange: '#E76F51',     // Accent/CTA
   mustard: '#F4A261',    // Warnings/highlights
   sage: '#9BBF9B',       // Success states
+  coral: '#E9C46A',      // Over-target warning
   white: '#FFFFFF',
   black: '#000000',
   gray: '#8E8E93',

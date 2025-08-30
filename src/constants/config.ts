@@ -2,12 +2,12 @@
 export const APP_ENV = process.env.APP_ENV || 'development';
 
 // OpenAI Configuration
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-export const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+export const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY || '';
+export const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 
 // Supabase Configuration
-export const SUPABASE_URL = process.env.SUPABASE_URL || '';
-export const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // Google Services
 export const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
