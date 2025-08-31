@@ -259,6 +259,55 @@ If any of these fail, that's your priority fix.
 - [ ] Recipe details
 - [ ] Social features
 - [ ] Workout integration
+- [ ] **Advanced Context Memory** - 24-hour smart conversation window with intelligent filtering
+
+---
+
+## Advanced AI Features (Week 6+ / Post-Launch)
+
+### Smart Context Memory System
+**Goal**: AI remembers 24-hour conversation history with intelligent filtering
+
+**Implementation Strategy**:
+```typescript
+// Intelligent context filtering for enhanced memory
+const getSmartContext = (messages, hours = 24) => {
+  const cutoff = Date.now() - (hours * 60 * 60 * 1000);
+  const recentMessages = messages.filter(msg => msg.timestamp > cutoff);
+  
+  // Prioritize nutrition-relevant messages
+  const importantMessages = recentMessages.filter(msg => 
+    msg.text.includes('meal') || 
+    msg.text.includes('goal') || 
+    msg.text.includes('calories') ||
+    msg.text.includes('plan') ||
+    msg.text.includes('allergic') ||
+    msg.text.includes('like') ||
+    msg.text.includes('dislike')
+  );
+  
+  // Combine important + recent, limit for performance
+  return [...importantMessages, ...recentMessages.slice(-8)].slice(-15);
+}
+```
+
+**Benefits**:
+- AI remembers dietary preferences across sessions
+- Better meal planning continuity ("yesterday you mentioned liking salmon")  
+- Progress tracking ("last week you struggled with protein intake")
+- Natural conversation flow without repetitive questions
+- Cost-optimized through smart filtering vs raw message dump
+
+**Technical Considerations**:
+- **Token Cost Management**: Filter messages by relevance to avoid API cost explosion
+- **Performance**: Limit context to ~15 messages max for response speed
+- **Storage**: Implement message timestamping and cleanup for old conversations
+- **Privacy**: Consider user control over memory retention settings
+
+**Success Metrics**:
+- User doesn't have to repeat dietary restrictions or preferences
+- AI references previous meal plans and suggestions appropriately
+- 50%+ reduction in repetitive questions about goals/preferences
 
 ---
 

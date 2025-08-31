@@ -70,11 +70,6 @@ export const detectConfirmation = (message: string): ConfirmationResult => {
   };
 };
 
-// Check if there are pending meal confirmations
-export const hasPendingMealConfirmations = (service: any): boolean => {
-  const pending = service.getPendingActions();
-  return pending.some((action: any) => action.type === 'meal_log');
-};
 
 // Get the most recent pending meal confirmation
 export const getLatestPendingMeal = (service: any) => {

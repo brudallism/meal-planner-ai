@@ -47,10 +47,54 @@ Since this project is in early planning stages with no code implementation yet, 
 - Conversational food logging with AI assistance
 - Smart substitution engine through chat interface
 
-**Data Sources:**
-- USDA FoodData Central API (300,000+ foods, free)
-- Nutritionix API for natural language processing
-- Google Places API for location-based restaurant suggestions
+## API Data Sources Priority
+
+The app uses a hybrid 3-API approach for comprehensive nutrition intelligence:
+
+**1. Recent conversation context (highest priority)**
+- Last 10 conversation turns with user
+- User's stated preferences and restrictions
+- Current meal plan and logged foods
+
+**2. User preferences from Supabase**
+- Nutrition goals and dietary restrictions
+- Historical meal preferences and patterns
+- Location preferences and favorite restaurants
+
+**3. Real-time API data (parallel queries)**
+- **Open Food Facts API** (Free) - Barcode scanning, product database, ingredient lists
+- **Spoonacular API** ($10/month) - Recipe intelligence, meal planning, cooking instructions
+- **USDA FoodData Central API** (Free) - Government nutritional accuracy, official macro data
+
+**4. Cached data (fallback only)**
+- Previously fetched recipes and nutrition data
+- Common food combinations and substitutions
+- User's historical successful meal choices
+
+## Conversational AI Guidelines
+
+**Seamless Data Blending:**
+- Always blend multiple data sources seamlessly in responses
+- Never mention API names or technical data sources to users
+- Present information as unified nutritional knowledge
+
+**Intelligent Query Strategy:**
+- For meal suggestions: Query Spoonacular for recipes + USDA for accurate nutrition
+- For barcode scanning: Use Open Food Facts first, fallback to manual input prompts
+- For restaurant recommendations: Combine location data with cached nutrition profiles
+- Cross-reference Spoonacular recipes with USDA nutritional data for accuracy
+
+**API Failure Handling:**
+- Spoonacular fails → Use cached recipes + USDA nutritional estimates
+- Open Food Facts barcode fails → Ask user for food description, suggest alternatives
+- USDA lookup fails → Use Spoonacular nutritional data with confidence qualifier
+- Always provide helpful responses, never expose API errors or downtime to users
+
+**Conversation Context Maintenance:**
+- Maintain conversation context across multiple API calls
+- Remember user corrections and preferences within conversation
+- Use conversation history to improve subsequent API queries
+- Handle multi-step conversations that require several API interactions
 
 ## Development Phases
 

@@ -59,6 +59,9 @@
 - Meal plan adherence rate > 70%
 - Substitution success rate > 80%
 - Average conversation satisfaction > 4.2/5
+- API response times < 3 seconds for 90% of queries
+- Data accuracy rate > 95% (cross-referenced with USDA)
+- Multi-API failover success rate > 99%
 
 ### Scope Boundaries
 
@@ -363,18 +366,41 @@ export const generateMealPlan = functions.https.onCall(async (data, context) => 
 - Maximum 10 conversation turn memory
 ```
 
-**Nutritional Data Pipeline**:
+**Hybrid API Integration Strategy**:
 ```yaml
-Data Sources:
-  - USDA FoodData Central API (primary)
-  - Edamam Food Database API (backup)
-  - OpenFoodFacts API (international foods)
-  - Custom database for restaurant items
+Data Sources (3-API Bootstrap Approach):
+  Primary APIs:
+    - Open Food Facts API (Free) - Core nutrition data, barcode scanning, food product database
+    - Spoonacular API ($10/month) - Meal planning, recipes, intelligent food ontology  
+    - USDA FoodData Central API (Free) - Government nutritional data for accuracy
+    - Supabase - User data, preferences, conversation history, meal plans
+
+API Rate Limiting Strategy:
+  - Spoonacular: 5 requests/second, 500/day (bootstrap plan)
+  - Open Food Facts: Unlimited (respect fair use)
+  - USDA: 1000 requests/hour
+  - Parallel API calls where possible to optimize response times
+
+Data Flow Architecture:
+  User Chat → AI Processing → Multi-API Queries → Data Synthesis → Response
+  
+Fallback Strategies:
+  - Spoonacular fails → Use cached recipes + USDA nutritional data
+  - Open Food Facts barcode fails → Prompt user for manual food description  
+  - USDA lookup fails → Use Spoonacular nutritional estimates
+  - Always provide helpful responses, never expose API errors
+
+Cost Analysis (Bootstrap Phase):
+  - $10/month Spoonacular subscription
+  - $0 for Open Food Facts and USDA APIs
+  - Total bootstrap cost: $10/month for comprehensive nutrition intelligence
 
 Caching Strategy:
-  - Redis for frequently accessed foods
-  - 24-hour cache for restaurant data
-  - Firestore for user's custom recipes
+  - Redis for frequently accessed foods (24-hour TTL)
+  - Spoonacular recipe cache (7-day TTL)
+  - USDA nutrition cache (30-day TTL) 
+  - Open Food Facts product cache (7-day TTL)
+  - User preference cache (real-time updates)
 ```
 
 #### Location & Restaurant Integration

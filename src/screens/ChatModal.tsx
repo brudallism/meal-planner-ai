@@ -22,6 +22,7 @@ import { analyzeMessageScope, generateRedirectionResponse } from '../services/sc
 import { confirmationService } from '../services/confirmationService';
 import { detectConfirmation, getLatestPendingMeal } from '../services/confirmationDetector';
 import { analyzeMealDetails, generateDetailQuestions, hasProvidedMissingDetails } from '../services/mealDetailAnalyzer';
+import { supabaseService } from '../services/supabase';
 
 interface Message {
   id: string;
@@ -40,6 +41,44 @@ const ChatModal = ({ navigation }: any) => {
   const addMeal = useAppStore((state) => state.addMeal);
   const { dailyTotals, nutritionGoals, todaysMeals } = useAppStore();
   const setNutritionGoals = useAppStore((state) => state.setNutritionGoals);
+  const loadMealsFromSupabase = useAppStore((state) => state.loadMealsFromSupabase);
+
+  // Helper function to find meals by description
+  const findMealByDescription = async (description: string, meals: any[]) => {
+    const lowerDescription = description.toLowerCase();
+    
+    // Try exact name match first
+    let match = meals.find(meal => 
+      meal.meal_name.toLowerCase().includes(lowerDescription) ||
+      lowerDescription.includes(meal.meal_name.toLowerCase())
+    );
+    
+    // If no name match, try meal type
+    if (!match) {
+      match = meals.find(meal => 
+        meal.meal_type.toLowerCase().includes(lowerDescription) ||
+        lowerDescription.includes(meal.meal_type.toLowerCase())
+      );
+    }
+    
+    // If still no match and there's only one meal, return it
+    if (!match && meals.length === 1) {
+      match = meals[0];
+    }
+    
+    return match;
+  };
+
+  // Get current user ID (this should be available from your auth context)
+  const getCurrentUserId = async () => {
+    try {
+      const user = await supabaseService.getCurrentUser();
+      return user?.id || 'temp-user-id';
+    } catch (error) {
+      console.error('Error getting user ID:', error);
+      return 'temp-user-id';
+    }
+  };
 
   useEffect(() => {
     // Initialize with welcome message
@@ -112,6 +151,9 @@ const ChatModal = ({ navigation }: any) => {
     // Check if this is a confirmation/rejection response first
     const confirmationResult = detectConfirmation(userMessage.text);
     const pendingMeal = getLatestPendingMeal(confirmationService);
+    
+    
+    
 
     // Check if user is providing missing details for a pending meal
     if (pendingMeal && pendingMeal.data.needsDetails) {
@@ -149,12 +191,18 @@ const ChatModal = ({ navigation }: any) => {
     }
 
     if (confirmationResult.isConfirmation && pendingMeal && !pendingMeal.data.needsDetails) {
-      // User confirmed - execute the pending meal log
+      // User confirmed - save directly to Supabase database
+      console.log('🎯 SAVING MEAL TO SUPABASE');
+      console.log('Pending meal data:', JSON.stringify(pendingMeal.data, null, 2));
+      
       try {
         const mealData = pendingMeal.data;
+        let totalCalories = 0;
+        let totalProtein = 0;
+        
+        // Save each meal item to Supabase
         for (const item of mealData.items) {
           const mealLog = {
-            id: `meal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             user_id: 'demo-user',
             meal_name: item.name,
             meal_type: mealData.mealType || 'snack' as const,
@@ -162,22 +210,33 @@ const ChatModal = ({ navigation }: any) => {
             protein: item.macros.protein,
             carbs: item.macros.carbs,
             fat: item.macros.fat,
-            fiber: item.macros.fiber,
-            sugar: item.macros.sugar,
+            fiber: item.macros.fiber || 0,
+            sugar: item.macros.sugar || 0,
+            sodium: 0, // Not provided by current system
             confidence: mealData.confidence,
             logged_at: mealData.eatingTime || new Date().toISOString(),
-            created_at: new Date().toISOString(),
           };
-          addMeal(mealLog);
+          
+          totalCalories += item.macros.calories;
+          totalProtein += item.macros.protein;
+          
+          console.log('💾 Saving meal to Supabase:', mealLog);
+          
+          // Save to Supabase database
+          const savedMeal = await supabaseService.logMeal(mealLog);
+          console.log('✅ Meal saved successfully:', savedMeal);
+          
+          // Also update local store for immediate UI update
+          addMeal({ ...savedMeal, id: savedMeal.id, created_at: savedMeal.created_at });
         }
         
         // Confirm the action
         confirmationService.confirmAction(pendingMeal.id);
         
-        // Send success message
+        // Send success message with details
         const successMessage = {
           id: `success_${Date.now()}`,
-          text: `✅ Perfect! I've logged your meal. Your progress is looking great! 🎉`,
+          text: `✅ Perfect! I've saved your meal to the database (${totalCalories} calories, ${totalProtein}g protein). Check your dashboard! 🎉`,
           isUser: false,
           timestamp: new Date(),
         };
@@ -186,6 +245,15 @@ const ChatModal = ({ navigation }: any) => {
         return;
       } catch (error) {
         console.error('Meal logging error:', error);
+        const errorMessage = {
+          id: `error_${Date.now()}`,
+          text: `Sorry, there was an error logging your meal. Please try again! 🙏`,
+          isUser: false,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setIsTyping(false);
+        return;
       }
     } else if (confirmationResult.isRejection && pendingMeal) {
       // User rejected - cancel the pending meal log
@@ -198,6 +266,17 @@ const ChatModal = ({ navigation }: any) => {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, rejectionMessage]);
+      setIsTyping(false);
+      return;
+    } else if (confirmationResult.isConfirmation && !pendingMeal) {
+      // User said "yes" but there's no pending meal to confirm
+      const noMealMessage = {
+        id: `no_meal_${Date.now()}`,
+        text: "I don't have any meal details ready to log right now. Could you tell me what you ate with specific quantities? For example: '2 eggs, 1 slice of toast, 1 cup of coffee' 😊",
+        isUser: false,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, noMealMessage]);
       setIsTyping(false);
       return;
     }
@@ -239,19 +318,19 @@ CORE ACTIONS YOU CAN PERFORM:
 
 CRITICAL MEAL LOGGING PROTOCOL:
 1. When user mentions eating food, DO NOT auto-log immediately
-2. Check if SPECIFIC QUANTITIES are provided (oz, grams, cups, slices, pieces, etc.)
-3. If quantities are missing, ask detailed questions:
-   - Eggs: "How many eggs? What size?"
-   - Bread/Toast: "How many slices? What type of bread?"
-   - Meat/Fish: "How many ounces? What cut/type?"
-   - Vegetables: "How much (cups)? Which vegetables specifically?"
-   - Any food: "What type exactly? How much?"
-4. Ask for eating time: "What time did you eat this?"
-5. Only after getting ALL details, ask: "Should I add this to your tracker?"
-6. Wait for user confirmation before logging
-7. If user just mentions enjoying food, ask: "Did you actually eat this, or are we chatting about it?"
+2. DO NOT say "I've added this" or "I've logged it" - you cannot log meals directly
+3. Check if SPECIFIC QUANTITIES are provided (oz, grams, cups, slices, pieces, etc.)
+4. If quantities are missing, ask detailed questions about the specific foods they mentioned:
+   - For proteins: ask for weight/size (ounces, grams, pieces)
+   - For grains/starches: ask for volume/servings (cups, slices)  
+   - For vegetables: ask for amount and type (cups, servings)
+   - Always ask: "What type exactly? How much?"
+5. Ask for eating time: "What time did you eat this?"
+6. Only after getting ALL details, ask: "Should I add this to your tracker?"
+7. Wait for user confirmation before logging
+8. NEVER claim meals are logged until user confirms with "yes"
 
-ACCURACY IS CRITICAL - Never log meals without specific quantities!
+ACCURACY IS CRITICAL - Never claim to log meals without user confirmation!
 
 CONVERSATION FLOW:
 1. Acknowledge what they've shared
@@ -290,10 +369,31 @@ CRITICAL BOUNDARY RULE: If ANY topic falls outside nutrition/food scope, immedia
 USER'S CURRENT NUTRITION STATUS:
 - Daily Goals: ${nutritionGoals.calories} calories, ${nutritionGoals.protein}g protein, ${nutritionGoals.carbs}g carbs, ${nutritionGoals.fat}g fat
 - Today's Progress: ${dailyTotals.calories}/${nutritionGoals.calories} calories (${Math.round((dailyTotals.calories/nutritionGoals.calories)*100)}%), ${dailyTotals.protein}g/${nutritionGoals.protein}g protein, ${dailyTotals.carbs}g/${nutritionGoals.carbs}g carbs, ${dailyTotals.fat}g/${nutritionGoals.fat}g fat
-- Meals logged today: ${todaysMeals.length} items
+- Remaining for Goals: ${nutritionGoals.calories - dailyTotals.calories} calories, ${nutritionGoals.protein - dailyTotals.protein}g protein, ${nutritionGoals.carbs - dailyTotals.carbs}g carbs, ${nutritionGoals.fat - dailyTotals.fat}g fat
+
+TODAY'S MEALS (reference these when suggesting new foods):
+${todaysMeals.map(meal => `- ${meal.meal_name} (${meal.meal_type}): ${meal.calories}cal, ${meal.protein}g protein, ${meal.carbs}g carbs, ${meal.fat}g fat`).join('\n')}
+
+INTELLIGENT CONVERSATION CAPABILITIES:
+- Reference specific meals they've eaten today when making suggestions
+- Calculate exact remaining macros needed to meet goals
+- Suggest meals that complement what they've already eaten
+- Help edit or remove meals if they made mistakes
+- Provide personalized recommendations based on their eating patterns
+
+DATA MANAGEMENT COMMANDS you can help with:
+- "Edit my breakfast" - help them modify a logged meal
+- "Remove the chicken I logged" - delete specific meals
+- "How much protein do I need?" - calculate remaining macros
+- "Suggest lunch" - recommend based on what they haven't eaten yet
 
 Remember: You're actively helping them build better eating habits through engaging conversation AND taking actions in their nutrition app!`
             },
+            // Include recent conversation history for context
+            ...messages.slice(-10).map(msg => ({
+              role: msg.isUser ? 'user' as const : 'assistant' as const,
+              content: msg.text
+            })),
             {
               role: 'user',
               content: userMessage.text
@@ -320,6 +420,7 @@ Remember: You're actively helping them build better eating habits through engagi
       // Parse potential meal data for confirmation (don't log immediately)
       try {
         const mealData = await extractMealData(userMessage.text, aiResponse);
+        
         if (mealData && mealData.items.length > 0) {
           // Analyze if we have all the necessary details
           const foodItems = mealData.items.map(item => item.name);
@@ -330,6 +431,10 @@ Remember: You're actively helping them build better eating habits through engagi
             const detailQuestions = generateDetailQuestions(detailAnalysis, mealData.mealType);
             
             // Store incomplete meal data for later completion
+            console.log('📋 CREATING PENDING MEAL (needs details)');
+            console.log('Meal data:', mealData);
+            console.log('Missing details:', detailAnalysis.gaps);
+            
             const pendingActionId = confirmationService.addPendingAction({
               type: 'meal_log',
               data: { ...mealData, needsDetails: true, missingDetails: detailAnalysis.gaps },
@@ -337,20 +442,33 @@ Remember: You're actively helping them build better eating habits through engagi
               aiResponse: aiResponse
             });
             
-            // Send follow-up message asking for details if AI didn't
-            setTimeout(() => {
-              if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
-                const detailMessage = {
-                  id: `details_${Date.now()}`,
-                  text: detailQuestions,
-                  isUser: false,
-                  timestamp: new Date(),
-                };
-                setMessages(prev => [...prev, detailMessage]);
-              }
-            }, 1500);
+            console.log('Created pending action ID:', pendingActionId);
+            
+            // Send follow-up message asking for details ONLY if AI didn't ask questions
+            const aiAskedQuestions = aiResponse.includes('?') || 
+                                   aiResponse.toLowerCase().includes('how much') || 
+                                   aiResponse.toLowerCase().includes('how many') ||
+                                   aiResponse.toLowerCase().includes('what type') ||
+                                   aiResponse.toLowerCase().includes('what size');
+            
+            if (!aiAskedQuestions) {
+              setTimeout(() => {
+                if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
+                  const detailMessage = {
+                    id: `details_${Date.now()}`,
+                    text: detailQuestions,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, detailMessage]);
+                }
+              }, 1500);
+            }
           } else {
             // All details provided - proceed to confirmation
+            console.log('✅ CREATING PENDING MEAL (complete - ready for confirmation)');
+            console.log('Complete meal data:', mealData);
+            
             const pendingActionId = confirmationService.addPendingAction({
               type: 'meal_log',
               data: mealData,
@@ -358,24 +476,34 @@ Remember: You're actively helping them build better eating habits through engagi
               aiResponse: aiResponse
             });
             
-            // AI should have asked for confirmation in its response
-            setTimeout(() => {
-              if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
-                const mealConfirmation = {
-                  ...mealData,
-                  mealType: mealData.mealType || 'snack' as const,
-                  eatingTime: '' // Will prompt user for time
-                };
-                const confirmationText = confirmationService.generateConfirmationMessage(mealConfirmation, userMessage.text);
-                const confirmationMessage = {
-                  id: `confirm_prompt_${Date.now()}`,
-                  text: confirmationText,
-                  isUser: false,
-                  timestamp: new Date(),
-                };
-                setMessages(prev => [...prev, confirmationMessage]);
-              }
-            }, 1500);
+            console.log('Created complete pending action ID:', pendingActionId);
+            
+            // Send backup confirmation ONLY if AI didn't ask for confirmation
+            const aiAskedForConfirmation = aiResponse.toLowerCase().includes('should i add') ||
+                                         aiResponse.toLowerCase().includes('add this to') ||
+                                         aiResponse.toLowerCase().includes('log this') ||
+                                         aiResponse.toLowerCase().includes('confirm') ||
+                                         aiResponse.toLowerCase().includes('tracker');
+            
+            if (!aiAskedForConfirmation) {
+              setTimeout(() => {
+                if (confirmationService.getPendingActions().some(a => a.id === pendingActionId)) {
+                  const mealConfirmation = {
+                    ...mealData,
+                    mealType: mealData.mealType || 'snack' as const,
+                    eatingTime: '' // Will prompt user for time
+                  };
+                  const confirmationText = confirmationService.generateConfirmationMessage(mealConfirmation, userMessage.text);
+                  const confirmationMessage = {
+                    id: `confirm_prompt_${Date.now()}`,
+                    text: confirmationText,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, confirmationMessage]);
+                }
+              }, 1500);
+            }
           }
         }
 
@@ -429,6 +557,90 @@ Remember: You're actively helping them build better eating habits through engagi
               break;
             case 'show_progress':
               console.log('Showing progress triggered by AI');
+              break;
+            case 'edit_meal':
+              try {
+                const mealToEdit = await findMealByDescription(action.data.meal_identifier, todaysMeals);
+                if (mealToEdit) {
+                  const editMessage = {
+                    id: `edit_${Date.now()}`,
+                    text: `I found your ${mealToEdit.meal_name} (${mealToEdit.meal_type}). What would you like to change about it? I can help you update the quantity, ingredients, or remove it completely.`,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, editMessage]);
+                } else {
+                  const notFoundMessage = {
+                    id: `not_found_${Date.now()}`,
+                    text: `I couldn't find the meal you're referring to. Could you be more specific? Here are today's meals: ${todaysMeals.map(m => m.meal_name).join(', ')}`,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, notFoundMessage]);
+                }
+              } catch (error) {
+                console.error('Edit meal error:', error);
+              }
+              break;
+            case 'delete_meal':
+              try {
+                const mealToDelete = await findMealByDescription(action.data.meal_identifier, todaysMeals);
+                if (mealToDelete) {
+                  await supabaseService.deleteMealLog(mealToDelete.id);
+                  const userId = await getCurrentUserId();
+                  await loadMealsFromSupabase(userId);
+                  const deleteMessage = {
+                    id: `delete_${Date.now()}`,
+                    text: `✅ I've removed "${mealToDelete.meal_name}" from your meal log. Your dashboard has been updated!`,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, deleteMessage]);
+                } else {
+                  const notFoundMessage = {
+                    id: `not_found_${Date.now()}`,
+                    text: `I couldn't find the meal you want to delete. Could you be more specific? Here are today's meals: ${todaysMeals.map(m => m.meal_name).join(', ')}`,
+                    isUser: false,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, notFoundMessage]);
+                }
+              } catch (error) {
+                console.error('Delete meal error:', error);
+              }
+              break;
+            case 'calculate_remaining':
+              try {
+                const macro = action.data.macro || 'all';
+                let responseText = '';
+                
+                if (macro === 'all' || macro === 'calories') {
+                  const remaining = nutritionGoals.calories - dailyTotals.calories;
+                  responseText += `🔥 Calories: ${remaining > 0 ? `${remaining} left` : `${Math.abs(remaining)} over goal`}\n`;
+                }
+                if (macro === 'all' || macro === 'protein') {
+                  const remaining = nutritionGoals.protein - dailyTotals.protein;
+                  responseText += `💪 Protein: ${remaining > 0 ? `${remaining}g needed` : `${Math.abs(remaining)}g over goal`}\n`;
+                }
+                if (macro === 'all' || macro === 'carbs') {
+                  const remaining = nutritionGoals.carbs - dailyTotals.carbs;
+                  responseText += `🍞 Carbs: ${remaining > 0 ? `${remaining}g left` : `${Math.abs(remaining)}g over goal`}\n`;
+                }
+                if (macro === 'all' || macro === 'fat') {
+                  const remaining = nutritionGoals.fat - dailyTotals.fat;
+                  responseText += `🥑 Fat: ${remaining > 0 ? `${remaining}g left` : `${Math.abs(remaining)}g over goal`}`;
+                }
+
+                const calcMessage = {
+                  id: `calc_${Date.now()}`,
+                  text: `Here's what you need to reach your goals:\n\n${responseText}`,
+                  isUser: false,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => [...prev, calcMessage]);
+              } catch (error) {
+                console.error('Calculate remaining error:', error);
+              }
               break;
             default:
               console.log('Unhandled action:', action.type);

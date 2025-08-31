@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { UserProfile, MealLog, PantryItem } from '../services/supabase';
-import { NutritionData } from '../services/openai';
+import { UserProfile, MealLog, PantryItem, supabaseService } from '../services/supabase';
+import { NutritionData } from '../types/nutrition';
 
 // Store interfaces
 interface User {
@@ -20,6 +20,7 @@ interface ChatState {
 }
 
 interface NutritionState {
+  allMeals: MealLog[];
   todaysMeals: MealLog[];
   dailyTotals: NutritionData;
   weeklyProgress: any[];
@@ -46,6 +47,7 @@ interface AppState extends User, ChatState, NutritionState, PantryState {
 
   // Nutrition actions
   addMeal: (meal: MealLog) => void;
+  loadMealsFromSupabase: (userId: string) => Promise<void>;
   updateDailyTotals: () => void;
   setNutritionGoals: (goals: NutritionData) => void;
   setTodaysMeals: (meals: MealLog[]) => void;
@@ -62,9 +64,26 @@ interface AppState extends User, ChatState, NutritionState, PantryState {
   resetStore: () => void;
 }
 
+// Check if a date string is today
+const isToday = (dateString: string): boolean => {
+  const today = new Date();
+  const date = new Date(dateString);
+  return (
+    date.getDate() === today.getDate() &&
+    date.getMonth() === today.getMonth() &&
+    date.getFullYear() === today.getFullYear()
+  );
+};
+
+// Filter meals for today only
+const getTodaysMeals = (allMeals: MealLog[]): MealLog[] => {
+  return allMeals.filter(meal => isToday(meal.logged_at || meal.created_at));
+};
+
 // Calculate daily nutrition totals
 const calculateDailyTotals = (meals: MealLog[]): NutritionData => {
-  return meals.reduce(
+  const todaysMeals = getTodaysMeals(meals);
+  return todaysMeals.reduce(
     (totals, meal) => ({
       calories: totals.calories + (meal.calories || 0),
       protein: totals.protein + (meal.protein || 0),
@@ -93,6 +112,7 @@ const initialState = {
   currentConversationId: null,
 
   // Nutrition state
+  allMeals: [],
   todaysMeals: [],
   dailyTotals: { calories: 0, protein: 0, carbs: 0, fat: 0 },
   weeklyProgress: [],
@@ -146,23 +166,46 @@ export const useAppStore = create<AppState>()(
       // Nutrition actions
       addMeal: (meal) =>
         set((state) => {
-          const updatedMeals = [...state.todaysMeals, meal];
+          const updatedAllMeals = [...state.allMeals, meal];
+          const todaysMeals = getTodaysMeals(updatedAllMeals);
           return {
-            todaysMeals: updatedMeals,
-            dailyTotals: calculateDailyTotals(updatedMeals),
+            allMeals: updatedAllMeals,
+            todaysMeals: todaysMeals,
+            dailyTotals: calculateDailyTotals(updatedAllMeals),
           };
         }),
 
+      loadMealsFromSupabase: async (userId: string) => {
+        try {
+          console.log('🔄 Loading meals from Supabase for user:', userId);
+          const meals = await supabaseService.getMealLogs(userId);
+          console.log('📊 Loaded', meals.length, 'meals from database');
+          
+          set((state) => {
+            const todaysMeals = getTodaysMeals(meals);
+            return {
+              allMeals: meals,
+              todaysMeals: todaysMeals,
+              dailyTotals: calculateDailyTotals(meals),
+            };
+          });
+        } catch (error) {
+          console.error('❌ Error loading meals from Supabase:', error);
+        }
+      },
+
       updateDailyTotals: () =>
         set((state) => ({
-          dailyTotals: calculateDailyTotals(state.todaysMeals),
+          todaysMeals: getTodaysMeals(state.allMeals),
+          dailyTotals: calculateDailyTotals(state.allMeals),
         })),
 
       setNutritionGoals: (goals) => set({ nutritionGoals: goals }),
 
       setTodaysMeals: (meals) =>
         set(() => ({
-          todaysMeals: meals,
+          allMeals: meals, // Assuming these are all meals, not just today's
+          todaysMeals: getTodaysMeals(meals),
           dailyTotals: calculateDailyTotals(meals),
         })),
 
@@ -207,9 +250,23 @@ export const useAppStore = create<AppState>()(
         // Nutrition goals and preferences
         nutritionGoals: state.nutritionGoals,
         
-        // Don't persist sensitive or temporary data
-        // messages, todaysMeals, pantry items will be fetched fresh
+        // Persist meal data for local tracking
+        allMeals: state.allMeals,
+        
+        // Don't persist temporary/computed data
+        // todaysMeals, dailyTotals will be computed from allMeals
+        // messages will be cleared on restart
       }),
+      
+      // Recompute derived values when loading from storage
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          const todaysMeals = getTodaysMeals(state.allMeals || []);
+          state.todaysMeals = todaysMeals;
+          state.dailyTotals = calculateDailyTotals(state.allMeals || []);
+          console.log('🔄 Store rehydrated with', state.allMeals?.length || 0, 'total meals,', todaysMeals.length, 'today');
+        }
+      },
     }
   )
 );

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -60,18 +60,14 @@ const MacroRing = ({ label, current, target, color }: any) => {
   );
 };
 
-const MealCard = ({ meal }: any) => (
-  <View style={styles.mealCard}>
-    <View style={styles.mealInfo}>
-      <Text style={styles.mealName}>{meal.name}</Text>
-      <Text style={styles.mealTime}>{meal.time}</Text>
-    </View>
-    <Text style={styles.mealCalories}>{meal.calories} cal</Text>
-  </View>
-);
 
 const HomeScreen = () => {
-  const { dailyTotals, nutritionGoals, todaysMeals } = useAppStore();
+  const { dailyTotals, nutritionGoals, todaysMeals, loadMealsFromSupabase } = useAppStore();
+  
+  // Load meals from Supabase when app starts
+  useEffect(() => {
+    loadMealsFromSupabase('demo-user');
+  }, [loadMealsFromSupabase]);
   
   const macroData = {
     protein: { current: dailyTotals.protein, target: nutritionGoals.protein, color: COLORS.teal },

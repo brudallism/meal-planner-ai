@@ -11,11 +11,6 @@ export const COLORS = {
   lightGray: '#F2F2F7',
 };
 
-export const FONTS = {
-  regular: 'System',
-  medium: 'System',
-  bold: 'System',
-};
 
 export const SIZES = {
   // Global sizes

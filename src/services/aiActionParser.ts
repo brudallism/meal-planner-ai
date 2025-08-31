@@ -1,5 +1,5 @@
 export interface AIAction {
-  type: 'log_meal' | 'update_goals' | 'suggest_meals' | 'show_progress' | 'plan_meal';
+  type: 'log_meal' | 'update_goals' | 'suggest_meals' | 'show_progress' | 'plan_meal' | 'edit_meal' | 'delete_meal' | 'calculate_remaining';
   data: any;
   confidence: number;
 }
@@ -59,6 +59,34 @@ DETECT THESE ACTIONS:
    Format: {
      "type": "show_progress",
      "data": {},
+     "confidence": 0.0-1.0
+   }
+
+5. EDIT_MEAL: When user wants to modify a logged meal
+   Format: {
+     "type": "edit_meal",
+     "data": {
+       "meal_identifier": "description of which meal to edit",
+       "changes": "what to change about it"
+     },
+     "confidence": 0.0-1.0
+   }
+
+6. DELETE_MEAL: When user wants to remove a logged meal
+   Format: {
+     "type": "delete_meal", 
+     "data": {
+       "meal_identifier": "description of which meal to delete"
+     },
+     "confidence": 0.0-1.0
+   }
+
+7. CALCULATE_REMAINING: When asking how much more they need to reach goals
+   Format: {
+     "type": "calculate_remaining",
+     "data": {
+       "macro": "protein|calories|carbs|fat|all"
+     },
      "confidence": 0.0-1.0
    }
 

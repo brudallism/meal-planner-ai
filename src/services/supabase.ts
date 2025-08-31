@@ -1,4 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
+import 'react-native-url-polyfill/auto';
+import { createClient, processLock } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../constants/config';
 
@@ -76,6 +77,7 @@ class SupabaseService {
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
+        lock: processLock,
       },
     });
   }
@@ -187,6 +189,42 @@ class SupabaseService {
   async getTodaysMeals(userId: string): Promise<MealLog[]> {
     const today = new Date().toISOString().split('T')[0];
     return this.getMealLogs(userId, today);
+  }
+
+  async updateMealLog(mealId: string, updates: Partial<MealLog>): Promise<MealLog> {
+    const { data, error } = await this.supabase
+      .from('meal_logs')
+      .update(updates)
+      .eq('id', mealId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  async deleteMealLog(mealId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('meal_logs')
+      .delete()
+      .eq('id', mealId);
+
+    if (error) throw error;
+  }
+
+  async getMealById(mealId: string): Promise<MealLog | null> {
+    const { data, error } = await this.supabase
+      .from('meal_logs')
+      .select('*')
+      .eq('id', mealId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching meal by ID:', error);
+      return null;
+    }
+
+    return data;
   }
 
   // Pantry management methods
